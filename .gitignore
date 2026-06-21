@@ -1,2 +1,30 @@
-skills/
+# Dependencies
 node_modules/
+
+# Build output
+dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Skills (internal)
+skills/
+
+# Downloads / screenshots (local only)
+download/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Vite
+.vite/
