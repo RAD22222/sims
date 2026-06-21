@@ -97,6 +97,11 @@ export interface FeatureCard {
   totalEffortDays: number;
   bugRiskAtShip?: number;
   shippedDay?: number;
+  isCustom?: boolean;       // user-created card (vs catalog)
+  isBug?: boolean;          // auto-generated bug fix card
+  priority?: number;        // 0 = normal, 1 = high, 2 = critical (for backlog ordering)
+  description?: string;     // user-provided description for custom cards
+  sourceCardId?: string;    // for bug cards: the card that spawned this bug
 }
 
 export interface Product {

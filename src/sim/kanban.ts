@@ -80,6 +80,49 @@ export function advanceKanban(state: GameState): GameState {
       }
     }
 
+    // Bug card generation: for each recently-shipped card (last 7 days) with high bug risk,
+    // small chance per day to spawn a bug-fix card in the backlog.
+    const newBugCards: FeatureCard[] = [];
+    for (const card of updatedKanban) {
+      if (card.stage !== 'shipped') continue;
+      if ((state.day - (card.shippedDay ?? 0)) > 7) continue; // only recent ships
+      const risk = card.bugRiskAtShip ?? 0.02;
+      // Daily chance to spawn a bug card, proportional to risk
+      if (Math.random() < risk * 0.4) {
+        // Check if a bug card for this source already exists in backlog/in_progress
+        const existingBug = updatedKanban.some(
+          (c) => c.isBug && c.sourceCardId === card.id && (c.stage === 'backlog' || c.stage === 'in_progress' || c.stage === 'qa')
+        );
+        if (!existingBug) {
+          const bugCard: FeatureCard = {
+            id: `bug_${card.id}_${state.day}_${Math.floor(Math.random() * 1000)}`,
+            name: `Bugfix: ${card.name}`,
+            category: 'infra',
+            requiredRoles: [{ role: card.requiredRoles[0]?.role ?? 'backend', effortDays: 2 }],
+            cost: 500,
+            prereqCardIds: [],
+            effect: {
+              churnMult: 0.98,
+              supportTicketReduction: 0.3,
+              customEffect: `Fixes bugs from ${card.name}`,
+            },
+            stage: 'backlog',
+            assignedEmployeeIds: [],
+            progressDays: 0,
+            totalEffortDays: 2,
+            bugRiskAtShip: 0,
+            isBug: true,
+            priority: 1,
+            sourceCardId: card.id,
+          };
+          newBugCards.push(bugCard);
+        }
+      }
+    }
+    if (newBugCards.length > 0) {
+      updatedKanban.push(...newBugCards);
+    }
+
     // Apply shipped card effects to product stats
     // Detect MVP ship — if MVP just shipped (or is shipped) and product is still pre_launch, transition to live
     let status = p.status;
@@ -175,4 +218,49 @@ export function autoAssignEmployees(card: FeatureCard, staff: Employee[]): strin
     if (candidates.length > 0) assigned.push(candidates[0].id);
   }
   return assigned;
+}
+
+// ETA prediction: how many in-game days until this in-progress card ships, given current capacity.
+// Returns null if any required role has zero capacity (stalled/blocked).
+export function predictEtaDays(
+  card: FeatureCard,
+  teamEmployees: Employee[],
+  founder: { specialization: string; hasSteppedBack: boolean } | null,
+): number | null {
+  const remaining = Math.max(0, card.totalEffortDays - card.progressDays);
+  let minDailyOutput = Infinity;
+  for (const req of card.requiredRoles) {
+    const matching = teamEmployees.filter((e) => e.role === req.role);
+    const founderMatch = founder && !founder.hasSteppedBack && founder.specialization === req.role;
+    const roleOutput =
+      matching.reduce((s, e) => s + employeeOutputPerDay(e), 0) +
+      (founderMatch ? founderOutputPerDay({ hasSteppedBack: false } as any) : 0);
+    if (roleOutput <= 0) return null;
+    if (roleOutput < minDailyOutput) minDailyOutput = roleOutput;
+  }
+  if (minDailyOutput === Infinity || minDailyOutput <= 0) return null;
+  return Math.ceil(remaining / minDailyOutput);
+}
+
+// Bottleneck role: which required role has the lowest daily output / effort ratio
+export function getBottleneckRole(
+  card: FeatureCard,
+  teamEmployees: Employee[],
+  founder: { specialization: string; hasSteppedBack: boolean } | null,
+): { role: string; output: number; effort: number } | null {
+  let bottleneck: { role: string; output: number; effort: number } | null = null;
+  let lowestRatio = Infinity;
+  for (const req of card.requiredRoles) {
+    const matching = teamEmployees.filter((e) => e.role === req.role);
+    const founderMatch = founder && !founder.hasSteppedBack && founder.specialization === req.role;
+    const roleOutput =
+      matching.reduce((s, e) => s + employeeOutputPerDay(e), 0) +
+      (founderMatch ? founderOutputPerDay({ hasSteppedBack: false } as any) : 0);
+    const ratio = roleOutput / req.effortDays;
+    if (ratio < lowestRatio) {
+      lowestRatio = ratio;
+      bottleneck = { role: req.role, output: roleOutput, effort: req.effortDays };
+    }
+  }
+  return bottleneck;
 }

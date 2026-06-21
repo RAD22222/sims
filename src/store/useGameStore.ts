@@ -38,6 +38,12 @@ export interface GameActions {
   forceShipCard: (productId: string, cardId: string) => void;
   assignEmployeeToCard: (productId: string, cardId: string, empId: string) => void;
   unassignEmployeeFromCard: (productId: string, cardId: string, empId: string) => void;
+  // New build-section functions
+  createCustomCard: (productId: string, card: Omit<FeatureCard, 'id' | 'stage' | 'assignedEmployeeIds' | 'progressDays'>) => boolean;
+  deleteCustomCard: (productId: string, cardId: string) => void;
+  setCardPriority: (productId: string, cardId: string, priority: 0 | 1 | 2) => void;
+  reorderBacklogCard: (productId: string, cardId: string, direction: 'up' | 'down') => void;
+  toggleCardLock: (productId: string, cardId: string) => void;
 
   // Products
   createProduct: (name: string, type: ProductType) => boolean;
@@ -450,6 +456,105 @@ export const useGameStore = create<Store>()(
         );
         set({
           products: state.products.map((p) => (p.id === productId ? { ...p, kanban: updatedKanban } : p)),
+        });
+      },
+
+      createCustomCard: (productId, cardSpec) => {
+        const state = get();
+        const product = state.products.find((p) => p.id === productId);
+        if (!product) return false;
+        if (state.cash < cardSpec.cost) {
+          set({
+            notifications: [...state.notifications, {
+              id: uid('notif'), day: state.day, title: 'Insufficient Cash', body: `Cannot add ${cardSpec.name} — need $${cardSpec.cost.toLocaleString()} to start.`, type: 'bad', read: false,
+            }],
+          });
+          return false;
+        }
+        const newCard: FeatureCard = {
+          ...cardSpec,
+          id: uid('card'),
+          stage: 'backlog',
+          assignedEmployeeIds: [],
+          progressDays: 0,
+        };
+        set({
+          products: state.products.map((p) =>
+            p.id === productId ? { ...p, kanban: [...p.kanban, newCard] } : p
+          ),
+          notifications: [...state.notifications, {
+            id: uid('notif'), day: state.day, title: 'Custom Feature Added', body: `"${cardSpec.name}" added to backlog. Cost: $${cardSpec.cost.toLocaleString()}.`, type: 'info', read: false,
+          }],
+        });
+        return true;
+      },
+
+      deleteCustomCard: (productId, cardId) => {
+        const state = get();
+        const product = state.products.find((p) => p.id === productId);
+        if (!product) return;
+        const card = product.kanban.find((c) => c.id === cardId);
+        if (!card || !card.isCustom) return; // only custom cards can be deleted
+        if (card.stage === 'in_progress' || card.stage === 'qa') return; // can't delete in-flight
+        set({
+          products: state.products.map((p) =>
+            p.id === productId ? { ...p, kanban: p.kanban.filter((c) => c.id !== cardId) } : p
+          ),
+        });
+      },
+
+      setCardPriority: (productId, cardId, priority) => {
+        const state = get();
+        const product = state.products.find((p) => p.id === productId);
+        if (!product) return;
+        set({
+          products: state.products.map((p) =>
+            p.id === productId
+              ? { ...p, kanban: p.kanban.map((c) => (c.id === cardId ? { ...c, priority } : c)) }
+              : p
+          ),
+        });
+      },
+
+      reorderBacklogCard: (productId, cardId, direction) => {
+        const state = get();
+        const product = state.products.find((p) => p.id === productId);
+        if (!product) return;
+        const idx = product.kanban.findIndex((c) => c.id === cardId);
+        if (idx === -1) return;
+        // Find the next backlog card in the requested direction
+        const backlogIndices = product.kanban
+          .map((c, i) => (c.stage === 'backlog' || c.stage === 'locked' ? i : -1))
+          .filter((i) => i !== -1);
+        const posInBacklog = backlogIndices.indexOf(idx);
+        if (posInBacklog === -1) return;
+        const swapWithPos = direction === 'up' ? posInBacklog - 1 : posInBacklog + 1;
+        if (swapWithPos < 0 || swapWithPos >= backlogIndices.length) return;
+        const swapIdx = backlogIndices[swapWithPos];
+        const newKanban = [...product.kanban];
+        const tmp = newKanban[idx];
+        newKanban[idx] = newKanban[swapIdx];
+        newKanban[swapIdx] = tmp;
+        set({
+          products: state.products.map((p) => (p.id === productId ? { ...p, kanban: newKanban } : p)),
+        });
+      },
+
+      toggleCardLock: (productId, cardId) => {
+        const state = get();
+        const product = state.products.find((p) => p.id === productId);
+        if (!product) return;
+        const card = product.kanban.find((c) => c.id === cardId);
+        if (!card) return;
+        // Only allow toggling if card is in backlog or locked
+        if (card.stage !== 'backlog' && card.stage !== 'locked') return;
+        const newStage = card.stage === 'locked' ? 'backlog' : 'locked';
+        set({
+          products: state.products.map((p) =>
+            p.id === productId
+              ? { ...p, kanban: p.kanban.map((c) => (c.id === cardId ? { ...c, stage: newStage } : c)) }
+              : p
+          ),
         });
       },
 
