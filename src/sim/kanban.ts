@@ -123,17 +123,13 @@ export function advanceKanban(state: GameState): GameState {
       updatedKanban.push(...newBugCards);
     }
 
-    // Apply shipped card effects to product stats
-    // Detect MVP ship — if MVP just shipped (or is shipped) and product is still pre_launch, transition to live
+    // MVP ship notification: when MVP ships, product stays in pre_launch but user can now start beta
+    // (Manual transition — user clicks "Start Beta Testing" in the Build tab)
+    // Auto-scale: if live product grows past 5000 users, mark as scaling
     let status = p.status;
-    let launchDate = p.launchDate;
-    const mvpCard = updatedKanban.find((c) => c.effect.isMvp);
-    if (mvpCard && mvpCard.stage === 'shipped' && status === 'pre_launch') {
-      status = 'live';
-      launchDate = mvpCard.shippedDay ?? state.day;
-    }
-    // Auto-scale status if users grow large
     if (status === 'live' && p.users > 5000) status = 'scaling';
+    // Auto-downscale if users drop
+    if (status === 'scaling' && p.users < 3000) status = 'live';
 
     // Recompute derived stats from base + shipped cards (deterministic, idempotent)
     const derived = recomputeProductFromShipped(p, updatedKanban);
@@ -142,7 +138,6 @@ export function advanceKanban(state: GameState): GameState {
       ...p,
       kanban: updatedKanban,
       status,
-      launchDate,
       productScore: derived.productScore,
       churnRate: derived.churnRate,
       monetizationTiers: { free: true, pro: derived.pro, enterprise: derived.enterprise },

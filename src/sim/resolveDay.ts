@@ -2,6 +2,7 @@ import type { GameState } from '../types';
 import { maybeSpawnEvent, expireEvents } from './events';
 import { advanceKanban, recomputeProductFromShipped } from './kanban';
 import { resolveSupportTickets, resolveProductEconomy, dailyExpenses, resolveMorale, checkResignations } from './economy';
+import { resolveBetaTesting, resolveQAFeedback, resolveLiveFeedback, resolveLiveBugs } from './beta';
 import { checkFundingMilestones, maybeOfferNextRound, checkWinLose } from './funding';
 import { getHostingPlan } from '../data/catalogs/hosting';
 
@@ -19,26 +20,17 @@ export function resolveDay(prev: GameState): GameState {
   // 2. Advance kanban cards (work from assigned staff)
   state = advanceKanban(state);
 
-  // 2b. Notify about newly-launched products
-  const newLaunches = state.products.filter(
-    (p) => prevLaunchStatus.get(p.id) === 'pre_launch' && p.status === 'live'
-  );
-  if (newLaunches.length > 0) {
-    state = {
-      ...state,
-      notifications: [
-        ...state.notifications,
-        ...newLaunches.map((p) => ({
-          id: `notif_launch_${p.id}_${state.day}`,
-          day: state.day,
-          title: '🚀 Product Launched!',
-          body: `${p.name} has shipped its MVP and is now live. Marketing will start acquiring users.`,
-          type: 'milestone' as const,
-          read: false,
-        })),
-      ],
-    };
-  }
+  // 2b. Resolve beta testing (testers find bugs, days decrement)
+  state = resolveBetaTesting(state);
+
+  // 2c. Resolve QA feedback (dev/customer feedback during QA phase)
+  state = resolveQAFeedback(state);
+
+  // 2d. Resolve live bugs (users discover bugs on live products)
+  state = resolveLiveBugs(state);
+
+  // 2e. Resolve live feedback (ratings + comments on live products)
+  state = resolveLiveFeedback(state);
 
   // 3. Resolve support tickets (generation + resolution)
   state = resolveSupportTickets(state);
@@ -57,7 +49,7 @@ export function resolveDay(prev: GameState): GameState {
   const totalRevenueToday = state.products.reduce((s, p) => s + p.revenueToday, 0);
   state.totalRevenueAllTime += totalRevenueToday;
 
-  // 7. Compute daily expenses
+  // 7. Compute daily expenses (includes beta tester costs)
   const expenses = dailyExpenses(state);
 
   // 8. Apply net profit/loss to shared cash pool

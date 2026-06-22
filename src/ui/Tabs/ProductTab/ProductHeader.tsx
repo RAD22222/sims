@@ -9,8 +9,11 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
-  pre_launch: { label: 'Pre-Launch', color: 'bg-slate-400/20 text-slate-300' },
-  live: { label: 'Live', color: 'bg-accent-emerald/20 text-accent-emerald' },
+  pre_launch: { label: 'Prototype', color: 'bg-slate-400/20 text-slate-300' },
+  beta: { label: 'Beta Testing', color: 'bg-accent-amber/20 text-accent-amber' },
+  qa: { label: 'QA Phase', color: 'bg-accent-violet/20 text-accent-violet' },
+  release_ready: { label: 'Release Ready', color: 'bg-accent-emerald/20 text-accent-emerald' },
+  live: { label: 'Live', color: 'bg-accent-cyan/20 text-accent-cyan' },
   scaling: { label: 'Scaling', color: 'bg-accent-cyan/20 text-accent-cyan' },
   sunset: { label: 'Sunset', color: 'bg-accent-rose/20 text-accent-rose' },
 };

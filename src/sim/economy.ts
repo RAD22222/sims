@@ -20,7 +20,8 @@ export function activeModifiersFor(state: GameState, target: 'company' | string,
 
 // Per-product daily user growth + churn + revenue
 export function resolveProductEconomy(product: Product, state: GameState): Product {
-  if (product.status === 'sunset' || product.status === 'pre_launch') {
+  // Only 'live' and 'scaling' products generate users/revenue
+  if (product.status !== 'live' && product.status !== 'scaling') {
     return { ...product, gainedToday: 0, churnedToday: 0, revenueToday: 0 };
   }
 
@@ -115,20 +116,24 @@ export function resolveSupportTickets(state: GameState): GameState {
 }
 
 // Company-wide daily expenses
-export function dailyExpenses(state: GameState): { salaries: number; hosting: number; marketing: number; total: number } {
+export function dailyExpenses(state: GameState): { salaries: number; hosting: number; marketing: number; beta: number; database: number; total: number } {
   const salaries = state.staff.reduce((s, e) => s + e.salary / 30, 0)
     + (state.founder.hasSteppedBack ? 0 : 8000 / 30); // founder stipend
   let hosting = 0;
   let marketing = 0;
+  let beta = 0;
+  let database = 0;
   for (const p of state.products) {
     if (p.status === 'sunset') continue;
-    if (p.status === 'pre_launch' && p.kanban.every((c) => c.stage !== 'shipped' || !c.effect.isMvp)) {
-      // pre-launch products still incur hosting cost (dev environment)
-    }
     hosting += getHostingPlan(p.hostingPlanId).costMonthly / 30;
+    database += p.databaseCost / 30;
     marketing += p.marketing.spendDaily;
+    // Beta tester daily costs
+    for (const t of p.betaTesters) {
+      if (t.active && t.daysRemaining > 0) beta += t.dailyCost;
+    }
   }
-  return { salaries: Math.round(salaries), hosting: Math.round(hosting), marketing: Math.round(marketing), total: Math.round(salaries + hosting + marketing) };
+  return { salaries: Math.round(salaries), hosting: Math.round(hosting), marketing: Math.round(marketing), beta: Math.round(beta), database: Math.round(database), total: Math.round(salaries + hosting + marketing + beta + database) };
 }
 
 // Morale drift for all employees

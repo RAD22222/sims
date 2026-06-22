@@ -32,7 +32,52 @@ export type Level = 'junior' | 'mid' | 'senior' | 'lead';
 
 export type ProductType = 'saas' | 'mobile' | 'desktop' | 'os';
 
-export type ProductStatus = 'pre_launch' | 'live' | 'scaling' | 'sunset';
+// Extended lifecycle: concept → prototype → beta → qa → release_ready → live → scaling → sunset
+export type ProductStatus =
+  | 'pre_launch'    // concept + prototype building (MVP not yet shipped)
+  | 'beta'          // MVP shipped, beta testers are testing
+  | 'qa'            // beta done, collecting dev/customer feedback
+  | 'release_ready' // all issues fixed, awaiting post-production setup
+  | 'live'          // post-production done, product is live
+  | 'scaling'       // lots of users
+  | 'sunset';       // discontinued
+
+export type SaasTemplate = 'project_mgmt' | 'crm' | 'analytics' | 'comms' | 'custom';
+
+export interface Bug {
+  id: string;
+  title: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  status: 'open' | 'in_progress' | 'fixed';
+  foundDay: number;
+  foundBy: 'beta_tester' | 'customer' | 'developer' | 'internal';
+  fixRole: Role;
+  fixEffortDays: number;
+  progressDays: number;
+  assignedEmployeeIds: string[];
+  description?: string;
+  reward?: number; // cash reward for fixing (beta tester bonus etc.)
+}
+
+export interface UserFeedback {
+  id: string;
+  day: number;
+  userName: string;
+  rating: 1 | 2 | 3 | 4 | 5;
+  comment: string;
+  category: 'bug' | 'feature_request' | 'praise' | 'complaint';
+  status: 'new' | 'acknowledged' | 'addressed';
+}
+
+export interface BetaTester {
+  id: string;
+  name: string;
+  skill: number;        // 0-100, higher = finds more bugs
+  dailyCost: number;    // $/day
+  daysRemaining: number; // days left in contract
+  bugsFound: number;
+  active: boolean;
+}
 
 export type CardCategory =
   | 'core'
@@ -108,6 +153,7 @@ export interface Product {
   id: string;
   name: string;
   type: ProductType;
+  template?: SaasTemplate;     // SaaS template (project_mgmt, crm, etc.)
   status: ProductStatus;
   launchDate: number | null;
   users: number;
@@ -116,6 +162,20 @@ export interface Product {
   productScore: number;
   team: string[]; // employee ids dedicated
   kanban: FeatureCard[];
+  bugs: Bug[];                  // active + fixed bugs
+  feedback: UserFeedback[];     // user feedback (post-launch + QA)
+  betaTesters: BetaTester[];    // hired beta testers
+  betaStartDate: number | null;
+  qaStartDate: number | null;
+  releaseReadyDate: number | null;
+  // Post-production setup
+  domain: string | null;        // e.g. "myapp.com"
+  domainCost: number;           // one-time domain registration cost
+  databaseType: 'none' | 'shared' | 'dedicated' | 'cluster';
+  databaseCost: number;         // monthly
+  sslEnabled: boolean;
+  cdnEnabled: boolean;
+  // Hosting (existing)
   hostingPlanId: string;
   monetizationTiers: { free: boolean; pro: boolean; enterprise: boolean };
   proPrice: number; // $/user/month
@@ -127,6 +187,8 @@ export interface Product {
   churnedToday: number;
   gainedToday: number;
   revenueToday: number;
+  avgRating: number;            // avg user rating (1-5)
+  totalRatings: number;
 }
 
 export interface HostingPlan {
@@ -201,7 +263,7 @@ export interface GameState {
   officeTier: 'garage' | 'loft' | 'floor' | 'tower';
   founderActionCooldowns: Record<string, number>;
   pendingFundingOffer: FundingRound | null;
-  activeTab: 'build' | 'product' | 'staff' | 'office';
+  activeTab: 'build' | 'product' | 'product_page' | 'staff' | 'office';
   activeProductId: string | null;
   onboardingComplete: boolean;
   selectedEmployeeId: string | null;

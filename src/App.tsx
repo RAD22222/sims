@@ -5,6 +5,7 @@ import TabsNav from './ui/Hud/TabsNav';
 import BuildTab from './ui/Tabs/BuildTab/BuildTab';
 import ProductTab from './ui/Tabs/ProductTab/ProductTab';
 import StaffTab from './ui/Tabs/StaffTab/StaffTab';
+import ProductPageTab from './ui/Tabs/ProductPageTab/ProductPageTab';
 import OfficeTab from './scene/OfficeTab';
 import NotificationsTray from './ui/Notifications/NotificationsTray';
 import OnboardingModal from './ui/Onboarding/OnboardingModal';
@@ -72,6 +73,7 @@ export default function App() {
               >
                 {activeTab === 'build' && hasProducts && <BuildTab />}
                 {activeTab === 'product' && hasProducts && <ProductTab />}
+                {activeTab === 'product_page' && hasProducts && <ProductPageTab />}
                 {activeTab === 'staff' && <StaffTab />}
                 {activeTab === 'office' && <OfficeTab />}
                 {activeTab === 'build' && !hasProducts && (
@@ -80,6 +82,11 @@ export default function App() {
                   </div>
                 )}
                 {activeTab === 'product' && !hasProducts && (
+                  <div className="flex h-full items-center justify-center text-slate-400">
+                    No products yet — start one from the New Product button.
+                  </div>
+                )}
+                {activeTab === 'product_page' && !hasProducts && (
                   <div className="flex h-full items-center justify-center text-slate-400">
                     No products yet — start one from the New Product button.
                   </div>

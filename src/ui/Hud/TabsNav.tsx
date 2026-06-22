@@ -4,7 +4,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 const TABS = [
   { id: 'office', label: 'Office', icon: '🏢' },
   { id: 'build', label: 'Build', icon: '📐' },
-  { id: 'product', label: 'Products', icon: '📊' },
+  { id: 'product', label: 'Products', icon: '⚙️' },
+  { id: 'product_page', label: 'Live Page', icon: '📈' },
   { id: 'staff', label: 'Staff', icon: '👥' },
 ] as const;
 
@@ -20,7 +21,7 @@ export default function TabsNav() {
       <div className="flex items-center">
         {TABS.map((tab) => {
           const isActive = activeTab === tab.id;
-          const disabled = (tab.id === 'build' || tab.id === 'product') && products.length === 0;
+          const disabled = (tab.id === 'build' || tab.id === 'product' || tab.id === 'product_page') && products.length === 0;
           return (
             <button
               key={tab.id}

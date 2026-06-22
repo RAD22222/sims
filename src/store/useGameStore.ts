@@ -1,15 +1,16 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { GameState, Employee, Product, ProductType, FeatureCard, Role, Level } from '../types';
+import type { GameState, Employee, Product, ProductType, FeatureCard, Role, Level, SaasTemplate, Bug, BetaTester, UserFeedback } from '../types';
 import { resolveDay } from '../sim/resolveDay';
 import { generateCandidatePool, promoteEmployee, reassignEmployee, DEPARTMENT_OF_ROLE } from '../sim/staff';
 import { autoAssignEmployees, forceShip } from '../sim/kanban';
 import { buildInitialKanban } from '../data/catalogs';
 import { HOSTING_PLANS } from '../data/catalogs/hosting';
+import { getTemplate, suggestDomain } from '../data/catalogs/saasTemplates';
 import { acceptFunding } from '../sim/funding';
 import { uid, randomName, randomCompanyName } from '../data/names';
 
-const NEW_PRODUCT_FEE = 25_000;
+const NEW_PRODUCT_FEE = 10_000; // reduced from 25K to make early game smoother
 
 export interface GameActions {
   tick: () => void;
@@ -46,13 +47,27 @@ export interface GameActions {
   toggleCardLock: (productId: string, cardId: string) => void;
 
   // Products
-  createProduct: (name: string, type: ProductType) => boolean;
+  createProduct: (name: string, type: ProductType, template?: SaasTemplate, starterFeatureIds?: string[]) => boolean;
   sunsetProduct: (productId: string) => void;
   setHostingPlan: (productId: string, planId: string) => void;
   setMarketingLevel: (productId: string, level: 0 | 1 | 2) => void;
   setMarketingSpend: (productId: string, spendDaily: number) => void;
   setProPrice: (productId: string, price: number) => void;
   setEnterprisePrice: (productId: string, price: number) => void;
+
+  // Beta / QA / Release lifecycle
+  startBetaTesting: (productId: string, testerCount: number, daysPerTester: number) => void;
+  hireBetaTester: (productId: string, tester: BetaTester) => void;
+  fixBug: (productId: string, bugId: string) => void;
+  startQA: (productId: string) => void;
+  markReleaseReady: (productId: string) => void;
+  releaseProduct: (productId: string) => void;
+  acknowledgeFeedback: (productId: string, feedbackId: string) => void;
+  // Post-production
+  setDomain: (productId: string, domain: string) => void;
+  setDatabase: (productId: string, dbType: 'none' | 'shared' | 'dedicated' | 'cluster') => void;
+  toggleSSL: (productId: string) => void;
+  toggleCDN: (productId: string) => void;
 
   // Funding
   acceptPendingFunding: () => void;
@@ -80,12 +95,76 @@ const initialFounder = {
   deskId: null,
 };
 
-function makeInitialProduct(name: string, type: ProductType): Product {
+function makeInitialProduct(name: string, type: ProductType, template?: SaasTemplate, starterFeatureIds?: string[]): Product {
   const hostingPlanId = type === 'saas' ? 'shared' : type === 'mobile' ? 'mobile_cdn' : type === 'desktop' ? 'license' : 'baremetal';
+  // Build kanban: start with template-based starter features (if SaaS) + catalog
+  let kanban: FeatureCard[] = [];
+  if (type === 'saas' && template) {
+    const tmpl = getTemplate(template);
+    // MVP is always first
+    const mvpCard: FeatureCard = {
+      id: `${name}_mvp`,
+      name: 'MVP / Prototype',
+      category: 'core',
+      requiredRoles: [
+        { role: 'frontend', effortDays: 8 },
+        { role: 'backend', effortDays: 8 },
+        { role: 'ui_ux', effortDays: 4 },
+      ],
+      cost: 4000,
+      prereqCardIds: [],
+      effect: { productScoreDelta: 15, isMvp: true },
+      stage: 'backlog',
+      assignedEmployeeIds: [],
+      progressDays: 0,
+      totalEffortDays: 20,
+    };
+    kanban.push(mvpCard);
+    // Add selected starter features
+    for (const sf of tmpl.starterFeatures) {
+      if (!starterFeatureIds || starterFeatureIds.includes(sf.id)) {
+        kanban.push({
+          id: `${name}_${sf.id}`,
+          name: sf.name,
+          category: 'core',
+          requiredRoles: sf.roles.map((r) => ({ role: r, effortDays: Math.ceil(sf.effortDays / sf.roles.length) })),
+          cost: sf.cost,
+          prereqCardIds: [],
+          effect: sf.effect,
+          stage: 'backlog',
+          assignedEmployeeIds: [],
+          progressDays: 0,
+          totalEffortDays: sf.effortDays,
+          description: sf.description,
+        });
+      }
+    }
+    // Add roadmap features as locked cards (unlock by day)
+    for (const rm of tmpl.roadmap) {
+      kanban.push({
+        id: `${name}_rm_${rm.day}_${rm.name.replace(/\s/g, '_').toLowerCase()}`,
+        name: rm.name,
+        category: rm.category,
+        requiredRoles: rm.roles,
+        cost: rm.cost,
+        prereqCardIds: [],
+        effect: rm.effect,
+        stage: 'locked',
+        assignedEmployeeIds: [],
+        progressDays: 0,
+        totalEffortDays: rm.roles.reduce((s, r) => s + r.effortDays, 0),
+        description: `Unlocks Day ${rm.day}. ${rm.description}`,
+      });
+    }
+  } else {
+    kanban = buildInitialKanban(type);
+  }
+
   return {
     id: uid('prod'),
     name,
     type,
+    template,
     status: 'pre_launch',
     launchDate: null,
     users: 0,
@@ -93,7 +172,19 @@ function makeInitialProduct(name: string, type: ProductType): Product {
     churnRate: 0.05,
     productScore: 0,
     team: [],
-    kanban: buildInitialKanban(type),
+    kanban,
+    bugs: [],
+    feedback: [],
+    betaTesters: [],
+    betaStartDate: null,
+    qaStartDate: null,
+    releaseReadyDate: null,
+    domain: null,
+    domainCost: 0,
+    databaseType: 'none',
+    databaseCost: 0,
+    sslEnabled: false,
+    cdnEnabled: false,
     hostingPlanId,
     monetizationTiers: { free: true, pro: false, enterprise: false },
     proPrice: 20,
@@ -105,6 +196,8 @@ function makeInitialProduct(name: string, type: ProductType): Product {
     churnedToday: 0,
     gainedToday: 0,
     revenueToday: 0,
+    avgRating: 0,
+    totalRatings: 0,
   };
 }
 
@@ -157,12 +250,14 @@ export const useGameStore = create<Store>()(
       selectEmployee: (id) => set({ selectedEmployeeId: id }),
 
       createFounder: (name, specialization) => {
-        const product = makeInitialProduct(randomCompanyName(), 'saas');
         set({
           founder: { name, specialization, hasSteppedBack: false, deskId: 'founder_desk' },
-          products: [product],
-          activeProductId: product.id,
+          products: [],
+          activeProductId: null,
           isPaused: true,
+          notifications: [...get().notifications, {
+            id: uid('notif'), day: 0, title: 'Welcome!', body: `Welcome, ${name}! Click "New Product" in the Build tab to create your first SaaS product.`, type: 'milestone', read: false,
+          }],
         });
       },
 
@@ -558,7 +653,7 @@ export const useGameStore = create<Store>()(
         });
       },
 
-      createProduct: (name, type) => {
+      createProduct: (name, type, template, starterFeatureIds) => {
         const state = get();
         if (state.cash < NEW_PRODUCT_FEE) return false;
         // OS requires 2+ successful products
@@ -566,14 +661,14 @@ export const useGameStore = create<Store>()(
           const successful = state.products.filter((p) => p.launchDate !== null && p.users > 1000);
           if (successful.length < 2) return false;
         }
-        const product = makeInitialProduct(name, type);
+        const product = makeInitialProduct(name, type, template, starterFeatureIds);
         set({
           cash: state.cash - NEW_PRODUCT_FEE,
           products: [...state.products, product],
           activeProductId: product.id,
           activeTab: 'build',
           notifications: [...state.notifications, {
-            id: uid('notif'), day: state.day, title: 'New Product Initiative', body: `${name} (${type}) launched as a new product line.`, type: 'milestone', read: false,
+            id: uid('notif'), day: state.day, title: 'New Product Initiative', body: `${name} (${type}) created. Hire staff and start the MVP!`, type: 'milestone', read: false,
           }],
         });
         return true;
@@ -638,6 +733,218 @@ export const useGameStore = create<Store>()(
         set({
           products: get().products.map((p) =>
             p.id === productId ? { ...p, enterprisePrice: price } : p
+          ),
+        });
+      },
+
+      // ===== Beta / QA / Release lifecycle =====
+
+      startBetaTesting: (productId, testerCount, daysPerTester) => {
+        const state = get();
+        const product = state.products.find((p) => p.id === productId);
+        if (!product) return;
+        if (product.status !== 'pre_launch') return;
+        // MVP must be shipped to start beta
+        const mvpShipped = product.kanban.some((c) => c.effect.isMvp && c.stage === 'shipped');
+        if (!mvpShipped) return;
+        // Generate beta testers
+        const testers: BetaTester[] = [];
+        for (let i = 0; i < testerCount; i++) {
+          testers.push({
+            id: uid('tester'),
+            name: randomName(),
+            skill: 40 + Math.random() * 40,
+            dailyCost: 200 + Math.random() * 300,
+            daysRemaining: daysPerTester,
+            bugsFound: 0,
+            active: true,
+          });
+        }
+        const totalCost = testers.reduce((s, t) => s + t.dailyCost * daysPerTester, 0);
+        if (state.cash < totalCost) {
+          set({
+            notifications: [...state.notifications, {
+              id: uid('notif'), day: state.day, title: 'Cannot Afford Beta', body: `Need $${totalCost.toLocaleString()} for ${testerCount} testers × ${daysPerTester} days.`, type: 'bad', read: false,
+            }],
+          });
+          return;
+        }
+        set({
+          cash: state.cash - totalCost,
+          products: state.products.map((p) =>
+            p.id === productId
+              ? { ...p, status: 'beta', betaTesters: testers, betaStartDate: state.day }
+              : p
+          ),
+          notifications: [...state.notifications, {
+            id: uid('notif'), day: state.day, title: '🧪 Beta Testing Started', body: `${testerCount} beta testers hired for ${daysPerTester} days. They'll find bugs!`, type: 'milestone', read: false,
+          }],
+        });
+      },
+
+      hireBetaTester: (productId, tester) => {
+        const state = get();
+        set({
+          products: state.products.map((p) =>
+            p.id === productId
+              ? { ...p, betaTesters: [...p.betaTesters, tester] }
+              : p
+          ),
+        });
+      },
+
+      fixBug: (productId, bugId) => {
+        const state = get();
+        const product = state.products.find((p) => p.id === productId);
+        if (!product) return;
+        const bug = product.bugs.find((b) => b.id === bugId);
+        if (!bug || bug.status !== 'open') return;
+        // Mark as in_progress, auto-assign matching employee
+        const teamEmployees = state.staff.filter((e) => e.assignedProductId === productId);
+        const matching = teamEmployees.filter((e) => e.role === bug.fixRole);
+        const assignedIds = matching.slice(0, 1).map((e) => e.id);
+        set({
+          products: state.products.map((p) =>
+            p.id === productId
+              ? { ...p, bugs: p.bugs.map((b) => b.id === bugId ? { ...b, status: 'in_progress', assignedEmployeeIds: assignedIds } : b) }
+              : p
+          ),
+        });
+      },
+
+      startQA: (productId) => {
+        const state = get();
+        const product = state.products.find((p) => p.id === productId);
+        if (!product) return;
+        if (product.status !== 'beta') return;
+        // All open bugs must be fixed before QA
+        const openBugs = product.bugs.filter((b) => b.status === 'open');
+        if (openBugs.length > 0) {
+          set({
+            notifications: [...state.notifications, {
+              id: uid('notif'), day: state.day, title: 'Cannot Start QA', body: `Fix all ${openBugs.length} open bugs first.`, type: 'bad', read: false,
+            }],
+          });
+          return;
+        }
+        set({
+          products: state.products.map((p) =>
+            p.id === productId ? { ...p, status: 'qa', qaStartDate: state.day } : p
+          ),
+          notifications: [...state.notifications, {
+            id: uid('notif'), day: state.day, title: '🔬 QA Phase Started', body: `${product.name} is now in QA. Developers and customers will provide feedback.`, type: 'milestone', read: false,
+          }],
+        });
+      },
+
+      markReleaseReady: (productId) => {
+        const state = get();
+        const product = state.products.find((p) => p.id === productId);
+        if (!product) return;
+        if (product.status !== 'qa') return;
+        set({
+          products: state.products.map((p) =>
+            p.id === productId ? { ...p, status: 'release_ready', releaseReadyDate: state.day } : p
+          ),
+          notifications: [...state.notifications, {
+            id: uid('notif'), day: state.day, title: '✅ Release Ready', body: `${product.name} is ready to release! Set up domain, database, and hosting in the Product tab to go live.`, type: 'milestone', read: false,
+          }],
+        });
+      },
+
+      releaseProduct: (productId) => {
+        const state = get();
+        const product = state.products.find((p) => p.id === productId);
+        if (!product) return;
+        if (product.status !== 'release_ready') return;
+        // Require post-production setup
+        if (!product.domain || !product.sslEnabled) {
+          set({
+            notifications: [...state.notifications, {
+              id: uid('notif'), day: state.day, title: 'Cannot Release', body: `Need a domain and SSL enabled before going live.`, type: 'bad', read: false,
+            }],
+          });
+          return;
+        }
+        set({
+          products: state.products.map((p) =>
+            p.id === productId ? { ...p, status: 'live', launchDate: state.day } : p
+          ),
+          notifications: [...state.notifications, {
+            id: uid('notif'), day: state.day, title: '🚀 Product is LIVE!', body: `${product.name} is now live at ${product.domain}! Users can sign up.`, type: 'milestone', read: false,
+          }],
+        });
+      },
+
+      acknowledgeFeedback: (productId, feedbackId) => {
+        const state = get();
+        set({
+          products: state.products.map((p) =>
+            p.id === productId
+              ? { ...p, feedback: p.feedback.map((f) => f.id === feedbackId ? { ...f, status: 'acknowledged' } : f) }
+              : p
+          ),
+        });
+      },
+
+      // ===== Post-production setup =====
+
+      setDomain: (productId, domain) => {
+        const state = get();
+        const product = state.products.find((p) => p.id === productId);
+        if (!product) return;
+        const cost = 500; // domain registration cost
+        if (product.domain === null && state.cash < cost) {
+          set({
+            notifications: [...state.notifications, {
+              id: uid('notif'), day: state.day, title: 'Cannot Afford Domain', body: `Domain registration costs $${cost}.`, type: 'bad', read: false,
+            }],
+          });
+          return;
+        }
+        set({
+          cash: product.domain === null ? state.cash - cost : state.cash,
+          products: state.products.map((p) =>
+            p.id === productId ? { ...p, domain, domainCost: cost } : p
+          ),
+        });
+      },
+
+      setDatabase: (productId, dbType) => {
+        const state = get();
+        const costs = { none: 0, shared: 100, dedicated: 500, cluster: 2000 };
+        const cost = costs[dbType];
+        set({
+          products: state.products.map((p) =>
+            p.id === productId ? { ...p, databaseType: dbType, databaseCost: cost } : p
+          ),
+        });
+      },
+
+      toggleSSL: (productId) => {
+        const state = get();
+        const product = state.products.find((p) => p.id === productId);
+        if (!product) return;
+        const cost = !product.sslEnabled ? 200 : 0; // one-time SSL setup
+        if (cost > 0 && state.cash < cost) return;
+        set({
+          cash: state.cash - cost,
+          products: state.products.map((p) =>
+            p.id === productId ? { ...p, sslEnabled: !p.sslEnabled } : p
+          ),
+        });
+      },
+
+      toggleCDN: (productId) => {
+        const state = get();
+        const product = state.products.find((p) => p.id === productId);
+        if (!product) return;
+        const cost = !product.cdnEnabled ? 300 : 0;
+        if (cost > 0 && state.cash < cost) return;
+        set({
+          cash: state.cash - cost,
+          products: state.products.map((p) =>
+            p.id === productId ? { ...p, cdnEnabled: !p.cdnEnabled } : p
           ),
         });
       },

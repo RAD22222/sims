@@ -5,6 +5,7 @@ import HostingPanel from './HostingPanel';
 import MarketingPanel from './MarketingPanel';
 import TeamPanel from './TeamPanel';
 import ChangelogFeed from './ChangelogFeed';
+import PostProductionPanel from './PostProductionPanel';
 import { useGameStore } from '../../../store/useGameStore';
 
 export default function ProductTab() {
@@ -26,6 +27,9 @@ export default function ProductTab() {
       <MetricStrip product={activeProduct} />
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-3 overflow-hidden">
         <div className="flex flex-col gap-3 overflow-hidden">
+          {(activeProduct.status === 'release_ready' || activeProduct.status === 'pre_launch' || activeProduct.status === 'beta' || activeProduct.status === 'qa') && (
+            <PostProductionPanel product={activeProduct} />
+          )}
           <MonetizationPanel product={activeProduct} />
           <MarketingPanel product={activeProduct} />
         </div>
